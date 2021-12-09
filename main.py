@@ -21,6 +21,10 @@ class KinematicLayer(nn.Module):
 
 
     def matchTemplate2JointsGreedyWithConstraint(self,joint_gt:np.ndarray,tempJ=None):
+        #paper: 5.3 Greedy Kinematic Layer
+        #input estimated joints and template
+        #output: joints following bio-constraint
+
 
         N = joint_gt.shape[0]
         joint_gt = joint_gt.reshape(N, 21, 3)
@@ -34,6 +38,7 @@ class KinematicLayer(nn.Module):
         orijoint_gt=joint_gt.clone()
         oriWrist = orijoint_gt[:, 0:1, :].clone()
         joint_gt = joint_gt- oriWrist.clone()
+        #align wrist
 
         transformG = torch.eye(4, dtype=torch.float32, device=device).reshape(1, 1, 4, 4).repeat(N, 16, 1,
                                                                                                  1).reshape(N,
@@ -67,6 +72,7 @@ class KinematicLayer(nn.Module):
 
 
         R,t = wristRotTorch(tempJ, joint_gt)
+        #hand palm alignment, get rotation and transition between estimated joints and template joints
         transformG[:, 0, :3, :3] = R
         transformG[:, 0, 3:, :3] = t
         transformL[:, 0, :3, :3] = R
@@ -75,9 +81,7 @@ class KinematicLayer(nn.Module):
         transformLmano[:, 0, 3:, :3] = t
 
 
-        joint_gt = self.hpl(joint_gt)
 
-        #print(joint_gt,tempJ)
         assert (torch.sum(joint_gt[:,0]-tempJ[:,0])<1e-5),"wrist joint should be same!"+str(torch.sum(joint_gt[:,0]-tempJ[:,0]))
 
         childern = [[1, 2, 3, 17, 4, 5, 6, 18, 7, 8, 9, 20, 10, 11, 12, 19, 13, 14, 15, 16],
@@ -88,9 +92,17 @@ class KinematicLayer(nn.Module):
                     [14, 15, 16], [15, 16], [16]]
 
         for child in childern[0]:
+            #palm registration
             t1 = (tempJ[:,child] - tempJ[:,0]).reshape(N,3,1)
             tempJ[:,child] = (transformL[:,0].clone() @ getHomo3D(t1)).reshape(N,4,1)[:,:-1,0]
 
+        plamsIdx = [0, 1, 4, 7, 10]
+        joint_gt[:, plamsIdx] = tempJ[:, plamsIdx].clone()
+        #corrected palm assignment
+        joint_gt = self.hpl(joint_gt, tempJ)
+        #finger Planarization
+        #Abduction and Adduction Rectification
+        #Twist Rectification
 
         manoidx = [2, 3, 17, 5, 6, 18, 8, 9, 20, 11, 12, 19, 14, 15, 16]
         manopdx = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
@@ -108,6 +120,8 @@ class KinematicLayer(nn.Module):
 
             tr = torch.eye(4, dtype=torch.float32,device=device).reshape(1, 4, 4).repeat(N,1,1)
             r = getRotationBetweenTwoVector(v0, v1)
+            #alignment for each keypoint
+            #get rotation for a finger keypoint
             tr[:,:3, :3] = r.clone()
             t0 = (tempJ[:,pi]).reshape(N,3)
             tr[:,:-1, -1] = t0
@@ -120,6 +134,7 @@ class KinematicLayer(nn.Module):
             for child in childern[pi]:
                 t1 = (tempJ[:,child] - tempJ[:,pi]).reshape(N,3,1)
                 tempJ[:,child] = (transformL[:,idx + 1].clone() @ getHomo3D(t1)).reshape(N,4,1)[:,:-1,0]
+                #apply rotation to rest fingers
 
             jidx = [[0, 1, 2, 3, 17], [0, 4, 5, 6, 18], [0, 7, 8, 9, 20], [0, 10, 11, 12, 19], [0, 13, 14, 15, 16]]
             if self.datasetname=='STB':
@@ -134,6 +149,7 @@ class KinematicLayer(nn.Module):
                 else:
                     pass
                     rot=self.hpl.FlexionLegitimizeForSingleJoint(tempJ,fidx=idx//3,finger=jidx[idx//3],i=fidces[idx//3][idx%3],j=fidces[idx//3][idx%3],debug=self.debug)
+                    #paper :5.7 Flexion and Extension Rectification
                     tr[:,:3, :3] = rot@r.clone()
                     #print('rot',rot)
             transformL[:, idx + 1] = tr

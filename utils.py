@@ -17,6 +17,7 @@ def get32fTensor(a)->torch.Tensor:
     return torch.tensor(a,dtype=torch.float32)
 
 def getRefJoints(joint_gt):
+    #get rest position of the hand
     manoidx = [2, 3, 17, 5, 6, 18, 8, 9, 20, 11, 12, 19, 14, 15, 16]
     manopdx = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     manoppx = [0, 1, 2, 0, 4, 5, 0, 7, 8, 0, 10, 11, 0, 13, 14]
@@ -45,6 +46,10 @@ def getRefJoints(joint_gt):
         return manotempJ
 
 def wristRotTorch(tempJ,joint_gt):
+    #palm registration
+    #get rotation R and transition t
+    #paper 5.3.1 Palm Registration
+    #svd rigid alignment https://zhuanlan.zhihu.com/p/115135931
     assert torch.is_tensor(tempJ)
     plamsIdx=[0,1,4,7,10]
     N, n, d = tempJ.shape[0], len(plamsIdx), tempJ.shape[2]
@@ -60,10 +65,12 @@ def wristRotTorch(tempJ,joint_gt):
 
 
 def getPalmNorm(joints: torch.Tensor, ) -> torch.Tensor:
+    #palm plane normal vector
     palmNorm = unit_vector(torch.cross(joints[:, 4] - joints[:, 0], joints[:, 7] - joints[:, 4], dim=1))
     return palmNorm
 
 def getPalmNormByIndex(joints: torch.Tensor, idx: int) -> torch.Tensor:
+    #get one palm plane normal vector
     if (idx == -1): return getPalmNorm(joints)
     assert 0 <= idx <= 4, "bad index"
     #c = [(13, 1), (1, 4), (4, 10), (10, 7)] (18/9/21 version) 1223normidx
@@ -98,12 +105,11 @@ def rotation_matrix(axis:torch.Tensor, theta:torch.Tensor)->torch.Tensor:
     out[:,2,1]=2 * (cd - ab)
     out[:,2,2]=aa + dd - bb - cc
     return out
-    # return np.array([[aa + bb - cc - dd, 2 * (bc + ad), 2 * (bd - ac)],
-    #                  [2 * (bc - ad), aa + cc - bb - dd, 2 * (cd + ab)],
-    #                  [2 * (bd + ac), 2 * (cd - ab), aa + dd - bb - cc]])
 
 
 def getFingerStdDir(joints:torch.Tensor,idx:int)->torch.Tensor:
+    #get standard right vector
+    # paper equation (5.2)
     #N = joints.shape[0]
     #if(idx==0):return unit_vector(joints[:,1]-joints[:,4])
     # if(0<=idx<=2):return unit_vector(joints[:,1]-joints[:,10])
@@ -128,11 +134,15 @@ def euDist(v0,v1):
 
 
 def disPoint2Plane(points,planeNorm,planeD):
+    #distance of plane to point
+    #https://stackoverflow.com/questions/9605556/how-to-project-a-point-onto-a-plane-in-3d
     N = points.shape[0]
     return (torch.sum((points.reshape(N,3) * planeNorm.reshape(N,3)).reshape(N, 3), dim=1, keepdim=True)
            + planeD.reshape(N,1)).reshape(N, 1)
 
 def projectPoint2Plane(points,planeNorm,planeD,relaxValue=0):
+    # https://stackoverflow.com/questions/9605556/how-to-project-a-point-onto-a-plane-in-3d
+    # project point to a plane
     N=points.shape[0]
     points=points.reshape(N,3)
     planeNorm=unit_vector(planeNorm)
@@ -152,6 +162,7 @@ def projectPoint2Plane(points,planeNorm,planeD,relaxValue=0):
     return torch.abs(epsilon+dis),projectedPoint
 
 def getPlaneFrom4Points(joints: torch.Tensor)->(torch.Tensor,torch.Tensor):
+    # get a average finger plane from four joints of one finger.
     N,n,d=joints.shape
     assert n==4
     from itertools import combinations
@@ -171,6 +182,8 @@ def getPlaneFrom4Points(joints: torch.Tensor)->(torch.Tensor,torch.Tensor):
     return vh,vd
 
 def svdForRotationWithoutW(a,b):
+    #svd rigid-registration
+    #https://zhuanlan.zhihu.com/p/115135931
     N,n,d=a.shape[0],a.shape[1],a.shape[2]
     w = (a.permute(0, 2, 1)) @ b
     w = w.cpu()
@@ -193,6 +206,8 @@ def unit_vector(vec):
         return vec / (torch.norm(vec,dim=1,keepdim=True)+1e-8)
     return vec / (np.linalg.norm(vec)+1e-8)
 def getRotationBetweenTwoVector(a,b):
+    #https://math.stackexchange.com/questions/180418/calculate-rotation-matrix-to-align-vector-a-to-vector-b-in-3d
+    #paper 5.3.2 Finger Registration
     if(torch.is_tensor(a)):
         #print('a,b',a,b)
         device=a.device
@@ -235,6 +250,8 @@ def getRotationBetweenTwoVector(a,b):
 
 
 def getHomo3D(x):
+    # get homogeneous vector
+    # [x,y,z]->[x,y,z,1]
     if(torch.is_tensor(x)):
         if(x.shape[-1]==4):return x
         if(x.shape[-1]==1 and x.shape[-2]==4):return x
@@ -248,6 +265,8 @@ def getHomo3D(x):
 
 
 def rotate2joint(wrist_trans,local_trans,template,parent):
+    #input: rotation matrix for each joints and template
+    #output: rotated hand skeleton
     device = wrist_trans.device
     Rs = torch.cat([wrist_trans, local_trans], dim=1)
     N = Rs.shape[0]
