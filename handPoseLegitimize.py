@@ -4,11 +4,11 @@ import torch.nn as nn
 import torch
 import trimesh
 from utils import *
-
+from config import *
 
 class HandPoseLegitimizeLayer(nn.Module):
     def __init__(self,fingerPlanarize=True,flexionLegitimize=False,abductionLegitimize=True,
-                 planeRotationLegitimize=True,debug=False,r=9,relaxplane=False):
+                 planeRotationLegitimize=True,debug=False,r=9,relaxplane=False,useRHDangle=False):
         super(HandPoseLegitimizeLayer, self).__init__()
         ##only works for right hand!!!
         self.fingerPlanarize=fingerPlanarize
@@ -18,6 +18,12 @@ class HandPoseLegitimizeLayer(nn.Module):
         self.debug=debug
         self.relaxplane = relaxplane
         self.r=r
+        self.useRHDangle=useRHDangle
+        if(useRHDangle):
+            abAngle=abangle
+            twAngle = twangle
+            flexAngle = flexangle
+            extenAngle = extenangle
         print("old---fingerPlanarize,flexionLegitimize,abductionLegitimize,planeRotationLegitimize,r,relaxplane",
               fingerPlanarize,flexionLegitimize,abductionLegitimize,planeRotationLegitimize,r,relaxplane)
 
@@ -64,7 +70,6 @@ class HandPoseLegitimizeLayer(nn.Module):
 
 
         N = joints.shape[0]
-        normidx = [1, 2, 2, 3]
         angleN = torch.tensor([np.pi / self.r],device=joints.device, dtype=joints.dtype)
         njoints = joints.clone()
         childern = [[2, 3, 17], [3, 17],
@@ -73,9 +78,8 @@ class HandPoseLegitimizeLayer(nn.Module):
                     [8, 9, 20],[9, 20],
                     [14, 15, 16],[14, 15],
                     ]
-        mcpidx = [1, 4, 10, 7]
 
-        jidx = [[0, 1, 2, 3, 17], [0, 4, 5, 6, 18], [0, 10, 11, 12, 19], [0, 7, 8, 9, 20]]
+        jidx = [[0, 1, 2, 3, 17], [0, 4, 5, 6, 18], [0, 10, 11, 12, 19], [0, 7, 8, 9, 20]]  # 1
         for idx, finger in enumerate(jidx):
             for yaxis in range(1, 2):
 
@@ -85,7 +89,10 @@ class HandPoseLegitimizeLayer(nn.Module):
                 angle = torch.acos(torch.clamp(torch.sum(calculatedFingerDir * stdfingerPlaneDir, dim=1), -1 + epsilon, 1 - epsilon)).reshape(-1)
                 angle[maskmcppipdipline]*=0
 
-                rot,difangle=self.getrot(angleN,angle,1,mcppip,calculatedFingerDir,stdfingerPlaneDir)
+                if(self.useRHDangle):
+                    rot, difangle = self.getrot(twangle[finger[yaxis]], angle, 1, mcppip, calculatedFingerDir, stdfingerPlaneDir)
+                else:
+                    rot,difangle=self.getrot(angleN,angle,1,mcppip,calculatedFingerDir,stdfingerPlaneDir)
 
                 ch=childern[idx*2+yaxis-1]
 
@@ -97,9 +104,9 @@ class HandPoseLegitimizeLayer(nn.Module):
 
     def getoverextensionMask(self,joints: torch.Tensor,mcpidx):
         # get useful vectors and for hyper-extension mask (finger which finger is in hyper-extension statue)
-        fingeridx={1:[1,2,3],4:[4,5,6],10:[10,11,12],7:[7,8,9],}
-        mcp2normidx={1:0,4:1,10:2,7:3}
-        mcp2stdfingeridx={1:0,4:1,10:2,7:3}
+        fingeridx={1:[1,2,3],4:[4,5,6],10:[10,11,12],7:[7,8,9],13:[13,14,15]}
+        mcp2normidx={1:0,4:1,10:2,7:3,13:4}
+        mcp2stdfingeridx={1:0,4:1,10:2,7:3,13:4}
         fi=fingeridx[mcpidx]
         N,device=joints.shape[0],joints.device
         wristmcp = unit_vector(joints[:, fi[0]] - joints[:, 0])
@@ -139,10 +146,9 @@ class HandPoseLegitimizeLayer(nn.Module):
         # output: estimated joints after finger Abduction and Adduction Rectificatio
         device=joints.device
         N = joints.shape[0]
-        normidx = [0, 1, 2, 3]  # index,middle,ringy,pinky,thumb
-        mcpidx = [1, 4, 10, 7]
-        pipidx = [2, 5, 11, 8]
-        fingerStdDiridx=[0,1,2,3]
+        normidx = [0, 1, 2, 3, 4]  # index,middle,ringy,pinky,thumb
+        mcpidx = [1, 4, 10, 7,13]
+        pipidx = [2, 5, 11, 8,14]
         #r = 18
         #r = 180
         angleP = torch.tensor([np.pi / self.r, np.pi / self.r, np.pi / self.r, np.pi / self.r],
@@ -176,8 +182,10 @@ class HandPoseLegitimizeLayer(nn.Module):
             angle = torch.acos(torch.clamp(torch.sum(rectifiedwristmcp * mcpprojpip, dim=1), -1 + epsilon, 1 - epsilon)).reshape(-1)
             angle[overflexionmask]*=0
 
-
-            rot,difangle=self.getrot(angleP[i],angle,flexRatio,palmNorm,mcpprojpip,wristmcp)
+            if(self.useRHDangle):
+                rot, difangle = self.getrot(abangle[mcpidx[i]], angle, flexRatio, palmNorm, mcpprojpip, wristmcp)
+            else:
+                rot,difangle=self.getrot(angleP[i],angle,flexRatio,palmNorm,mcpprojpip,wristmcp)
 
             for child in childern[i]:
                 #apply to the whole finger
@@ -187,7 +195,7 @@ class HandPoseLegitimizeLayer(nn.Module):
 
 
     @staticmethod
-    def FlexionLegitimizeForSingleJoint(njoints:torch.Tensor,fidx,finger,i,j,debug=False):
+    def FlexionLegitimizeForSingleJoint(njoints:torch.Tensor,fidx,finger,i,j,useRHDangle=False):
         # Flexion and Extension Rectification
         # paper sec 5.7
         # works single joint
@@ -235,11 +243,17 @@ class HandPoseLegitimizeLayer(nn.Module):
         rot = torch.eye(3).reshape(1, 3, 3).repeat(N, 1, 1).reshape(N, 3, 3).to(device)
         if (torch.sum(maskP)):
             #equation: on (5.27)
-            difangle = torch.max(angle[maskP] - angleP[i], torch.zeros_like(angle[maskP]))
+            if(useRHDangle):
+                difangle = torch.max(angle[maskP] - flexangle[rotroot[fidx * 3 + i]], torch.zeros_like(angle[maskP]))
+            else:
+                difangle = torch.max(angle[maskP] - angleP[i], torch.zeros_like(angle[maskP]))
             rot[maskP] = rotation_matrix(axis=fingerrotnorm[maskP], theta=-difangle)
         if (torch.sum(maskN)):
             # equation: on (5.27)
-            difangle = torch.max(angle[maskN] - angleN[i], torch.zeros_like(angle[maskN]))
+            if (useRHDangle):
+                difangle = torch.max(angle[maskN] - extenangle[rotroot[fidx * 3 + i]], torch.zeros_like(angle[maskN]))
+            else:
+                difangle = torch.max(angle[maskN] - angleN[i], torch.zeros_like(angle[maskN]))
             rot[maskN] = rotation_matrix(axis=fingerrotnorm[maskN], theta=-difangle)
 
         idx = fidx * 3 + i
@@ -262,7 +276,7 @@ class HandPoseLegitimizeLayer(nn.Module):
             #if (fidx == 4): angleN = angleNthumb
             for i,j in zip(fidces[fidx],normidces[fidx]):
                 HandPoseLegitimizeLayer.\
-                    FlexionLegitimizeForSingleJoint(njoints,fidx,finger,i,j,self.debug)
+                    FlexionLegitimizeForSingleJoint(njoints,fidx,finger,i,j,self.useRHDangle)
         return njoints
 
 

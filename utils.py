@@ -85,6 +85,7 @@ def rotation_matrix(axis:torch.Tensor, theta:torch.Tensor)->torch.Tensor:
     """
     Return the rotation matrix associated with counterclockwise rotation about
     the given axis by theta radians.
+
     """
     N=max(theta.shape[0],axis.shape[0])
     assert len(axis.shape)==2
@@ -168,7 +169,7 @@ def getPlaneFrom4Points(joints: torch.Tensor)->(torch.Tensor,torch.Tensor):
     from itertools import combinations
     subsets = list(combinations([0,1,2,3], 3))
     subsets = [[0,2,3],[0,1,3]]
-    #subsets = [[0,1,2],[0,1,3]]
+    ###todo:plane explain
     vlist = []
     for subset in subsets:
         v0 = joints[:, subset[0]] - joints[:, subset[1]]
@@ -205,6 +206,8 @@ def unit_vector(vec):
         vec=vec.reshape(bs,3)
         return vec / (torch.norm(vec,dim=1,keepdim=True)+1e-8)
     return vec / (np.linalg.norm(vec)+1e-8)
+
+
 def getRotationBetweenTwoVector(a,b):
     #https://math.stackexchange.com/questions/180418/calculate-rotation-matrix-to-align-vector-a-to-vector-b-in-3d
     #paper 5.3.2 Finger Registration

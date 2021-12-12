@@ -2,181 +2,112 @@ import torch.nn as nn
 import torch
 from handPoseLegitimize import *
 from utils import *
+from config import *
 
 class KinematicLayer(nn.Module):
-    def __init__(self, hpl=None,flex=True,notip=False,debug=False,datasetname=None):
+    def __init__(self,RHDtemplate=False,flex=True,useRHDAngle=False):
         super(KinematicLayer, self).__init__()
-        print("mano use flex rectification",flex,notip,datasetname)
         self.flex=flex
-        if(hpl is None):
-            self.hpl = HandPoseLegitimizeLayer(fingerPlanarize=True,flexionLegitimize=False,abductionLegitimize=True,
-                 planeRotationLegitimize=True,debug=False,r=9,relaxplane=False)
-        else:self.hpl = hpl
-        self.notip=notip
-        self.debug=debug
-        self.datasetname=datasetname
-        with open(manoPath, 'rb') as f:
-            model = pickle.load(f, encoding='latin1')
-        self.parents = np.array(model['kintree_table'])[0].astype(np.int32)
+        self.hpl = HandPoseLegitimizeLayer(fingerPlanarize=True, flexionLegitimize=False, abductionLegitimize=True,
+                                           planeRotationLegitimize=True, debug=False, r=9, relaxplane=False,useRHDangle=useRHDAngle)
+        self.parents = np.array([-1,0,1,2,0,4,5,0,7,8,0,10,11,0,13,14]).astype(np.int32)
+        self.RHDtemplate=RHDtemplate
+        self.useRHDAngle=useRHDAngle
+        if RHDtemplate:
+            self.bonelenstd=boneLenStd
+            self.bonelenmean=boneLenMean
 
 
-    def matchTemplate2JointsGreedyWithConstraint(self,joint_gt:np.ndarray,tempJ=None):
-        #paper: 5.3 Greedy Kinematic Layer
-        #input estimated joints and template
-        #output: joints following bio-constraint
+    def AlignStretchTemplateWithConstraint(self,joints,tempJ):
+        assert torch.is_tensor(joints) and torch.is_tensor(tempJ)
+        N,device = joints.shape[0],joints.device
 
-
-        N = joint_gt.shape[0]
-        joint_gt = joint_gt.reshape(N, 21, 3)
-        if (not torch.is_tensor(joint_gt)):
-            joint_gt = torch.tensor(joint_gt, device='cpu', dtype=torch.float32)
-        device = joint_gt.device
-
-
-        # first make wrist to zero
-
-        orijoint_gt=joint_gt.clone()
-        oriWrist = orijoint_gt[:, 0:1, :].clone()
-        joint_gt = joint_gt- oriWrist.clone()
-        #align wrist
-
-        transformG = torch.eye(4, dtype=torch.float32, device=device).reshape(1, 1, 4, 4).repeat(N, 16, 1,
-                                                                                                 1).reshape(N,
-                                                                                                            16, 4, 4)
-        transformL = torch.eye(4, dtype=torch.float32, device=device).reshape(1, 1, 4, 4).repeat(N, 16, 1,
-                                                                                                 1).reshape(N,
-                                                                                                            16, 4, 4)
-        transformLmano = torch.eye(4, dtype=torch.float32, device=device).reshape(1, 1, 4, 4).repeat(N, 16, 1,
-                                                                                                 1).reshape(N,
-                                                                                                            16, 4, 4)
-        transformG[:, 0, :3, 3] = joint_gt[:, 0].clone()
-        transformL[:, 0, :3, 3] = joint_gt[:, 0].clone()
-        transformLmano[:, 0, :3, 3] = joint_gt[:, 0].clone()
-
-
-
-        if(tempJ is None):
-            assert False
-        else:
-            #print("use external template")
-            if(not torch.is_tensor(tempJ)):tempJ=torch.tensor(tempJ,dtype=torch.float32,device=device)
-            if(len(tempJ.shape)==3):
-                tempJ=tempJ.reshape(N, 21, 3)
-            else:
-                tempJ = tempJ.reshape(1, 21, 3).clone().repeat(N, 1, 1).reshape(N, 21, 3)
-        tempJori = tempJ.clone()
-        tempJ = tempJ - tempJori[:, 0:1, :]
-        tempJori = tempJori - tempJori[:, 0:1, :].clone()
-
-
-
-
-        R,t = wristRotTorch(tempJ, joint_gt)
-        #hand palm alignment, get rotation and transition between estimated joints and template joints
-        transformG[:, 0, :3, :3] = R
-        transformG[:, 0, 3:, :3] = t
-        transformL[:, 0, :3, :3] = R
-        transformL[:, 0, 3:, :3] = t
-        transformLmano[:, 0, :3, :3] = R
-        transformLmano[:, 0, 3:, :3] = t
-
-
-
-        assert (torch.sum(joint_gt[:,0]-tempJ[:,0])<1e-5),"wrist joint should be same!"+str(torch.sum(joint_gt[:,0]-tempJ[:,0]))
-
-        childern = [[1, 2, 3, 17, 4, 5, 6, 18, 7, 8, 9, 20, 10, 11, 12, 19, 13, 14, 15, 16],
-                    [2, 3, 17], [3, 17], [17],
-                    [5, 6, 18], [6, 18], [18],
-                    [8, 9, 20], [9, 20], [20],
-                    [11, 12, 19], [12, 19], [19],
-                    [14, 15, 16], [15, 16], [16]]
-
-        for child in childern[0]:
-            #palm registration
-            t1 = (tempJ[:,child] - tempJ[:,0]).reshape(N,3,1)
-            tempJ[:,child] = (transformL[:,0].clone() @ getHomo3D(t1)).reshape(N,4,1)[:,:-1,0]
-
-        plamsIdx = [0, 1, 4, 7, 10]
-        joint_gt[:, plamsIdx] = tempJ[:, plamsIdx].clone()
-        #corrected palm assignment
-        joint_gt = self.hpl(joint_gt, tempJ)
-        #finger Planarization
-        #Abduction and Adduction Rectification
-        #Twist Rectification
+        joints = joints.reshape(N, 21, 3)
+        wrist = joints[:, 0:1, :].clone()
+        joints = joints.clone() - wrist.clone()
+        tempJ=tempJ.clone()-tempJ[:,:1,:].clone()
+        bonelenTempJ=tempJ.clone()
+        R, t = wristRotTorch(tempJ, joints)
 
         manoidx = [2, 3, 17, 5, 6, 18, 8, 9, 20, 11, 12, 19, 14, 15, 16]
-        manopdx = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
-        manoppx = [0, 1, 2, 0, 4, 5, 0, 7, 8, 0, 10, 11, 0, 13, 14]
-        jidx = [[0], [1, 2, 3, 17], [4, 5, 6, 18], [10, 11, 12, 19], [7, 8, 9, 20], [13, 14, 15, 16]]
-        mcpidx=[1,4,10,7]
-        ratio = []
+        manopdx = [1, 2, 3,  4, 5, 6,  7, 8, 9,  10, 11, 12, 13, 14, 15]
+        transformL = torch.eye(4, dtype=torch.float32, device=device).reshape(1, 4, 4).repeat(N, 1, 1)
+        transformL[:, :3, :3] = R
+        transformL[:, 3:, :3] = t
+        for child in [1, 2, 3, 17, 4, 5, 6, 18, 7, 8, 9, 20, 10, 11, 12, 19, 13, 14, 15, 16]:
+            t1 = (tempJ[:,child] - tempJ[:,0]).reshape(N,3,1)
+            tempJ[:,child] = (transformL.clone() @ getHomo3D(t1)).reshape(N,4,1)[:,:-1,0]
+        plamsIdx = [0, 1, 4, 7, 10]
+
+        joints[:, plamsIdx] = tempJ[:, plamsIdx].clone()
+        joints = self.hpl(joints)
+
         for idx, i in enumerate(manoidx):
             pi = manopdx[idx]
-            v0 = (tempJ[:,i] - tempJ[:,pi]).reshape(N,3)
-            v1 = (joint_gt[:,i] - tempJ[:,pi]).reshape(N,3)
-
-            # print('ratio',pi,i,torch.mean(torch.norm(v0)/torch.norm(joint_gt[:,i]-joint_gt[:,pi])))
-            # ratio.append(np.linalg.norm(v0) / np.linalg.norm(v1))
-
-            tr = torch.eye(4, dtype=torch.float32,device=device).reshape(1, 4, 4).repeat(N,1,1)
-            r = getRotationBetweenTwoVector(v0, v1)
-            #alignment for each keypoint
-            #get rotation for a finger keypoint
-            tr[:,:3, :3] = r.clone()
-            t0 = (tempJ[:,pi]).reshape(N,3)
-            tr[:,:-1, -1] = t0
-
-            # print('r',r)
-
-            transformL[:,idx + 1] = tr
-
-
-            for child in childern[pi]:
-                t1 = (tempJ[:,child] - tempJ[:,pi]).reshape(N,3,1)
-                tempJ[:,child] = (transformL[:,idx + 1].clone() @ getHomo3D(t1)).reshape(N,4,1)[:,:-1,0]
-                #apply rotation to rest fingers
-
-            jidx = [[0, 1, 2, 3, 17], [0, 4, 5, 6, 18], [0, 7, 8, 9, 20], [0, 10, 11, 12, 19], [0, 13, 14, 15, 16]]
-            if self.datasetname=='STB':
-                fidces = [[0, 1, 2], [0, 1, 2], [0, 1, 2], [0, 1, 2], [1, 2], ]
-                normidces = [[1, 1, 2], [1, 1, 2], [1, 1, 2], [1, 1, 2], [1, 2], ]
+            v1 = (joints[:,i] - tempJ[:,pi]).reshape(N,3)
+            dis=torch.norm(v1,dim=1).reshape(N)
+            univ1=v1/dis.reshape(N,1)
+            if(self.RHDtemplate):
+                upperbound=(self.bonelenmean[i]+self.bonelenstd[i]).reshape(1).repeat(N).reshape(N)
+                lowerbound=(self.bonelenmean[i]-self.bonelenstd[i]).reshape(1).repeat(N).reshape(N)
             else:
-                fidces = [[0, 1, 2], [0, 1, 2], [0, 1, 2], [0, 1, 2], [0, 1, 2],]
-                normidces = [[1, 1, 2], [1, 1, 2], [1, 1, 2], [1, 1, 2], [0, 1, 2],]
+                upperbound = torch.norm(bonelenTempJ[:, i] - bonelenTempJ[:, pi],dim=1).reshape(N)
+                lowerbound = torch.norm(bonelenTempJ[:, i] - bonelenTempJ[:, pi],dim=1).reshape(N)
+            validmask=((lowerbound<=dis)&(dis<=upperbound))
+            lessmask=dis<lowerbound
+            moremask=dis>upperbound
+            if(torch.sum(validmask)):tempJ[validmask,i]=joints[validmask,i].clone()
+            if(torch.sum(lessmask)):tempJ[lessmask,i]=tempJ[lessmask,pi]+(univ1*lowerbound.reshape(N,1))[lessmask]
+            if(torch.sum(moremask)):tempJ[moremask,i]=tempJ[moremask,pi]+(univ1*upperbound.reshape(N,1))[moremask]
+            jidx = [[0, 1, 2, 3, 17], [0, 4, 5, 6, 18], [0, 7, 8, 9, 20], [0, 10, 11, 12, 19], [0, 13, 14, 15, 16]]
+            fidces = [[0, 1, 2], [0, 1, 2], [0, 1, 2], [0, 1, 2], [0, 1, 2],]
             if(self.flex):
-                if(self.notip and idx%3==2):pass
-                elif(idx//3==4 and idx%3==2):pass
-                else:
-                    pass
-                    rot=self.hpl.FlexionLegitimizeForSingleJoint(tempJ,fidx=idx//3,finger=jidx[idx//3],i=fidces[idx//3][idx%3],j=fidces[idx//3][idx%3],debug=self.debug)
-                    #paper :5.7 Flexion and Extension Rectification
-                    tr[:,:3, :3] = rot@r.clone()
-                    #print('rot',rot)
-            transformL[:, idx + 1] = tr
+                rot=self.hpl.FlexionLegitimizeForSingleJoint(tempJ,fidx=idx//3,finger=jidx[idx//3],i=fidces[idx//3][idx%3],j=fidces[idx//3][idx%3],useRHDangle=self.useRHDAngle)
+                t1 = (tempJ[:,i] - tempJ[:,pi]).reshape(N,3,1)
+                tempJ[:,i] = (rot @ t1).reshape(N,3) + tempJ[:,pi].reshape(N,3)
 
-            Gp = transformG[:, self.parents[idx + 1]].reshape(N, 4, 4).clone()
-            transformG[:, idx + 1] = transformL[:, idx + 1].clone() @ Gp
-            transformLmano[:, idx + 1] = torch.inverse(Gp) @ transformL[:, idx + 1].clone() @ Gp
-
-
-        local_trans = transformLmano[:, 1:, :3, :3].reshape(N, 15, 3, 3)
-        wrist_trans = transformLmano[:, 0, :3, :3].reshape(N, 1, 3, 3)
-
-        outjoints = rotate2joint(wrist_trans, local_trans, tempJori, self.parents).reshape(N,21,3)
-        assert (torch.mean(torch.sqrt(torch.sum((outjoints-tempJ)**2,dim=2)))<2),"outjoints and tempJ epe should be small"+str(torch.mean(torch.sqrt(torch.sum((outjoints - tempJ) ** 2, dim=2))))
-
-        outjoints = outjoints + oriWrist
-
-        #return wrist_trans,local_trans,outjoints
-        return outjoints
+        return wrist+tempJ
 
 
 
 if __name__ == '__main__':
-    pass
     joints=torch.randn(5,21,3)
     ref=getRefJoints(joints)
-    kl=KinematicLayer()
-    outjoints=kl.matchTemplate2JointsGreedyWithConstraint(joints,ref)
+    kl=KinematicLayer(RHDtemplate=True,useRHDAngle=True)
+    outjoints=kl.AlignStretchTemplateWithConstraint(joints,ref)
     print(outjoints.shape)
+
+
+
+    from cscPy.mano.network.manolayer import MANO_SMPL
+    from cscPy.mano.network.utils import *
+    from cscPy.Const.const import manoPath
+    mano_right = MANO_SMPL(manoPath, ncomps=45, oriorder=True,
+                           device='cuda', userotJoints=True)
+    skeleton2skinepe=[]
+    for epoch in range(1, 100):
+        pose = torch.tensor(np.random.uniform(-2, 2, [7, 45]).astype(np.float32))
+        rootr = torch.tensor(np.random.uniform(-3.14, 3.14, [7, 3]).astype(np.float32))
+        vertex_gt, joint_gt = mano_right.get_mano_vertices(rootr.view(7, 1, 3),
+                                                           pose.view(7, 45),
+                                                           torch.zeros([70]).view(7, 10),
+                                                           torch.ones([7]).view(7, 1),
+                                                           torch.zeros([21]).view(7, 3),
+                                                           pose_type='pca', mmcp_center=False)
+
+        joint_gt = mano_right.newjs.cpu().numpy()[:, :, :-1].copy().reshape(7, 21, 3)
+        joint_gt = get32fTensor(joint_gt)
+
+        templatejoints = getRefJoints(joint_gt)
+        # print(joint_gt.shape,templatejoints.shape)
+
+        tempJ = kl.AlignStretchTemplateWithConstraint(get32fTensor(joint_gt),tempJ=get32fTensor(templatejoints))
+        tempJ = tempJ.cpu().numpy().copy()
+        joint_gt = joint_gt.cpu().numpy().copy()
+
+        print("epe tempJ,joint_gt", np.mean(np.sqrt(np.sum((tempJ - joint_gt) ** 2, axis=-1))) * 1000)
+        skeleton2skinepe.append(np.mean(np.sqrt(np.sum((tempJ - joint_gt) ** 2, axis=-1))) * 1000)
+
+    print("mean skeleton2skinepe", np.mean(skeleton2skinepe))
+
 
