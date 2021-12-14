@@ -7,6 +7,7 @@ from config import *
 class KinematicLayer(nn.Module):
     def __init__(self,RHDtemplate=False,useRHDAngle=False,flex=True,fingerPlanarize=True,abductionLegitimize=True,planeRotationLegitimize=True):
         super(KinematicLayer, self).__init__()
+        # mano index order
         self.flex=flex
         self.hpl = HandPoseLegitimizeLayer(fingerPlanarize=fingerPlanarize, flexionLegitimize=False, abductionLegitimize=abductionLegitimize,
                                            planeRotationLegitimize=planeRotationLegitimize,
@@ -87,36 +88,5 @@ if __name__ == '__main__':
     print(outjoints.shape)
 
 
-
-    from cscPy.mano.network.manolayer import MANO_SMPL
-    from cscPy.mano.network.utils import *
-    from cscPy.Const.const import manoPath
-    mano_right = MANO_SMPL(manoPath, ncomps=45, oriorder=True,
-                           device='cuda', userotJoints=True)
-    skeleton2skinepe=[]
-    for epoch in range(1, 100):
-        pose = torch.tensor(np.random.uniform(-2, 2, [7, 45]).astype(np.float32))
-        rootr = torch.tensor(np.random.uniform(-3.14, 3.14, [7, 3]).astype(np.float32))
-        vertex_gt, joint_gt = mano_right.get_mano_vertices(rootr.view(7, 1, 3),
-                                                           pose.view(7, 45),
-                                                           torch.zeros([70]).view(7, 10),
-                                                           torch.ones([7]).view(7, 1),
-                                                           torch.zeros([21]).view(7, 3),
-                                                           pose_type='pca', mmcp_center=False)
-
-        joint_gt = mano_right.newjs.cpu().numpy()[:, :, :-1].copy().reshape(7, 21, 3)
-        joint_gt = get32fTensor(joint_gt)
-
-        templatejoints = getRefJoints(joint_gt)
-        # print(joint_gt.shape,templatejoints.shape)
-
-        tempJ = kl.AlignStretchTemplateWithConstraint(get32fTensor(joint_gt),tempJ=get32fTensor(templatejoints))
-        tempJ = tempJ.cpu().numpy().copy()
-        joint_gt = joint_gt.cpu().numpy().copy()
-
-        print("epe tempJ,joint_gt", np.mean(np.sqrt(np.sum((tempJ - joint_gt) ** 2, axis=-1))) * 1000)
-        skeleton2skinepe.append(np.mean(np.sqrt(np.sum((tempJ - joint_gt) ** 2, axis=-1))) * 1000)
-
-    print("mean skeleton2skinepe", np.mean(skeleton2skinepe))
 
 
