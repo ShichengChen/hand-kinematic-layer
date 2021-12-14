@@ -151,9 +151,8 @@ if __name__ == "__main__":
     arr=torch.zeros([len(train_dataset),21,4])
     print(arr.shape)
     hpl = HandPoseLegitimizeLayer()
-    for idx, dic in tqdm.tqdm(enumerate(train_loader)):
+    for idx, xyz in tqdm.tqdm(enumerate(train_loader)):
         #if(idx>10):break
-        xyz = dic["kp_coord_xyz"]
         hpl(xyz,arr[idx])
         mcpidx=[1,4,7,10,13]
         flexidx=[1,2,3,  4,5,6, 7,8,9, 10,11,12, 13,14,15]
@@ -162,10 +161,10 @@ if __name__ == "__main__":
         print(idx,"flex",arr[idx][flexidx][:,2])
         print(idx,"exten",arr[idx][flexidx][:,3])
     arr=arr.cpu().numpy()
-    print('ab',torch.tensor(np.percentile(arr[:,:,0],75,axis=0)))
-    print('tw',torch.tensor(np.percentile(arr[:,:,1],75,axis=0)))
-    print('flex',torch.tensor(np.percentile(arr[:,:,2],75,axis=0)))
-    print('exten',torch.tensor(np.percentile(arr[:,:,3],75,axis=0)))
+    print('ab',torch.tensor(np.percentile(arr[:,:,0],95,axis=0)))
+    print('tw',torch.tensor(np.percentile(arr[:,:,1],95,axis=0)))
+    print('flex',torch.tensor(np.percentile(arr[:,:,2],95,axis=0)))
+    print('exten',torch.tensor(np.percentile(arr[:,:,3],95,axis=0)))
     print('ab',torch.tensor(np.max(arr[:,:,0],axis=0)))
     print('tw',torch.tensor(np.max(arr[:,:,1],axis=0)))
     print('flex',torch.tensor(np.max(arr[:,:,2],axis=0)))

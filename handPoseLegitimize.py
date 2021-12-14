@@ -19,11 +19,6 @@ class HandPoseLegitimizeLayer(nn.Module):
         self.relaxplane = relaxplane
         self.r=r
         self.useRHDangle=useRHDangle
-        if(useRHDangle):
-            abAngle=abangle
-            twAngle = twangle
-            flexAngle = flexangle
-            extenAngle = extenangle
         print("old---fingerPlanarize,flexionLegitimize,abductionLegitimize,planeRotationLegitimize,r,relaxplane",
               fingerPlanarize,flexionLegitimize,abductionLegitimize,planeRotationLegitimize,r,relaxplane)
 
@@ -149,14 +144,12 @@ class HandPoseLegitimizeLayer(nn.Module):
         normidx = [0, 1, 2, 3, 4]  # index,middle,ringy,pinky,thumb
         mcpidx = [1, 4, 10, 7,13]
         pipidx = [2, 5, 11, 8,14]
-        #r = 18
-        #r = 180
-        angleP = torch.tensor([np.pi / self.r, np.pi / self.r, np.pi / self.r, np.pi / self.r],
+        angleP = torch.tensor([np.pi / self.r, np.pi / self.r, np.pi / self.r, np.pi / self.r, np.pi / self.r],
                               device=joints.device, dtype=joints.dtype)
-        rectify=torch.tensor([0.1890, 0.1331, -0.1491,0.0347],device=joints.device, dtype=joints.dtype)
+        rectify=torch.tensor([0.1890, 0.1331, -0.1491,0.0347,0],device=joints.device, dtype=joints.dtype)
         njoints = joints.clone()
         childern = [[2, 3, 17],[5, 6, 18],[11, 12, 19],[8, 9, 20],[14, 15, 16]]
-        for i in range(4):
+        for i in range(len(normidx)):
             palmNorm = getPalmNormByIndex(joints, normidx[i]).reshape(N, 3)  # palm up
             # palm up vector, palm plane normal vector
             vh = palmNorm.reshape(N, 3)

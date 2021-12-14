@@ -51,7 +51,7 @@ def wristRotTorch(tempJ,joint_gt):
     #paper 5.3.1 Palm Registration
     #svd rigid alignment https://zhuanlan.zhihu.com/p/115135931
     assert torch.is_tensor(tempJ)
-    plamsIdx=[0,1,4,7,10]
+    plamsIdx=[0,1,4,7,10,13]
     N, n, d = tempJ.shape[0], len(plamsIdx), tempJ.shape[2]
     a=tempJ[:,plamsIdx].clone().reshape(N,n,3)
     b=joint_gt[:,plamsIdx].clone().reshape(N,n,3)
