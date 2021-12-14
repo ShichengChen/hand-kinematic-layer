@@ -44,6 +44,7 @@ class KinematicLayer(nn.Module):
 
         joints[:, plamsIdx] = tempJ[:, plamsIdx].clone()
         #palm correction
+
         joints = self.hpl(joints)
         #finger correction: finger planarize, abduction correction, twist correction
 
