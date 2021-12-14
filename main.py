@@ -45,9 +45,11 @@ class KinematicLayer(nn.Module):
 
         joints[:, plamsIdx] = tempJ[:, plamsIdx].clone()
         #palm correction
+        #paper sec  5.3.1 Palm Registration
 
         joints = self.hpl(joints)
         #finger correction: finger planarize, abduction correction, twist correction
+        # paper sec 5.4 5.5 5.6
 
         for idx, i in enumerate(manoidx):
             pi = manopdx[idx]
@@ -61,6 +63,7 @@ class KinematicLayer(nn.Module):
                 upperbound = torch.norm(bonelenTempJ[:, i] - bonelenTempJ[:, pi],dim=1).reshape(N)
                 lowerbound = torch.norm(bonelenTempJ[:, i] - bonelenTempJ[:, pi],dim=1).reshape(N)
             #define upperbound and lowerbound of bone length
+            # paper 5.3.2 Finger Registration
             validmask=((lowerbound<=dis)&(dis<=upperbound))
             lessmask=dis<lowerbound
             moremask=dis>upperbound
@@ -73,6 +76,7 @@ class KinematicLayer(nn.Module):
             if(self.flex):
                 rot=self.hpl.FlexionLegitimizeForSingleJoint(tempJ,fidx=idx//3,finger=jidx[idx//3],i=fidces[idx//3][idx%3],j=fidces[idx//3][idx%3],useRHDangle=self.useRHDAngle)
                 #joint flexion or extension angle correction
+                # paper sec 5.7.2 Rectification
                 t1 = (tempJ[:,i] - tempJ[:,pi]).reshape(N,3,1)
                 tempJ[:,i] = (rot @ t1).reshape(N,3) + tempJ[:,pi].reshape(N,3)
 
@@ -88,5 +92,36 @@ if __name__ == '__main__':
     print(outjoints.shape)
 
 
+
+    from cscPy.mano.network.manolayer import MANO_SMPL
+    from cscPy.mano.network.utils import *
+    from cscPy.Const.const import manoPath
+    mano_right = MANO_SMPL(manoPath, ncomps=45, oriorder=True,
+                           device='cuda', userotJoints=True)
+    skeleton2skinepe=[]
+    for epoch in range(1, 100):
+        pose = torch.tensor(np.random.uniform(-2, 2, [7, 45]).astype(np.float32))
+        rootr = torch.tensor(np.random.uniform(-3.14, 3.14, [7, 3]).astype(np.float32))
+        vertex_gt, joint_gt = mano_right.get_mano_vertices(rootr.view(7, 1, 3),
+                                                           pose.view(7, 45),
+                                                           torch.zeros([70]).view(7, 10),
+                                                           torch.ones([7]).view(7, 1),
+                                                           torch.zeros([21]).view(7, 3),
+                                                           pose_type='pca', mmcp_center=False)
+
+        joint_gt = mano_right.newjs.cpu().numpy()[:, :, :-1].copy().reshape(7, 21, 3)
+        joint_gt = get32fTensor(joint_gt)
+
+        templatejoints = getRefJoints(joint_gt)
+        # print(joint_gt.shape,templatejoints.shape)
+
+        tempJ = kl.AlignStretchTemplateWithConstraint(get32fTensor(joint_gt),tempJ=get32fTensor(templatejoints))
+        tempJ = tempJ.cpu().numpy().copy()
+        joint_gt = joint_gt.cpu().numpy().copy()
+
+        print("epe tempJ,joint_gt", np.mean(np.sqrt(np.sum((tempJ - joint_gt) ** 2, axis=-1))) * 1000)
+        skeleton2skinepe.append(np.mean(np.sqrt(np.sum((tempJ - joint_gt) ** 2, axis=-1))) * 1000)
+
+    print("mean skeleton2skinepe", np.mean(skeleton2skinepe))
 
 
