@@ -122,7 +122,7 @@ def getFingerStdDir(joints:torch.Tensor,idx:int)->torch.Tensor:
     if (3 >= idx >= 2):
         return unit_vector(joints[:, 4] - joints[:, 7])
     elif idx == 4:
-        return unit_vector(joints[:, 13] - joints[:, 1])
+        return unit_vector(joints[:, 14] - joints[:, 1])
     # normidx = [-1, -1, -1, -1, 0]  # index,middle,ringy,pinky,thumb
     # mcpidx = [1, 4, 10, 7, 13]
     # palmNorm = getPalmNormByIndex(joints, normidx[idx]).reshape(N, 3)  # palm up

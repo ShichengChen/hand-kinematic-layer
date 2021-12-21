@@ -202,7 +202,7 @@ class HandPoseLegitimizeLayer(nn.Module):
         elif (fidx == 4):
             angleN = torch.tensor([np.pi / 4, np.pi / 18, np.pi / 4], device=njoints.device,
                                   dtype=njoints.dtype)  # .reshape(1, 3).repeat(N, 1)
-            angleP = torch.tensor([np.pi / 4, np.pi / 4, np.pi / 2], device=njoints.device,
+            angleP = torch.tensor([np.pi / 2, np.pi*3 / 4, np.pi / 2], device=njoints.device,
                                   dtype=njoints.dtype)  # .reshape(1, 3).repeat(N, 1)
         else:
             assert False
